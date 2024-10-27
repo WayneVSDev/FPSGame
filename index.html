@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+        }
+        #gameCanvas {
+            width: 100vw;
+            height: 100vh;
+            cursor: crosshair;
+        }
+        #hud {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            user-select: none;
+        }
+        #crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #crosshair::before,
+        #crosshair::after {
+            content: '';
+            position: absolute;
+            background: white;
+        }
+        #crosshair::before {
+            width: 2px;
+            height: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        #crosshair::after {
+            width: 20px;
+            height: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        #startPrompt {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 24px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 10px;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="crosshair"></div>
+    <div id="hud">
+        Ammo: <span id="ammoCount">30</span><br>
+        Score: <span id="score">0</span>
+    </div>
+    <div id="startPrompt">
+        Click to start<br>
+        <small>WASD to move, Mouse to aim, Click to shoot</small>
+    </div>
+
+    <script>
+        // Audio Manager Class
+        class AudioManager {
+            constructor() {
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                this.buffers = new Map();
+                this.masterGain = this.audioContext.createGain();
+                this.masterGain.connect(this.audioContext.destination);
+            }
+
+            async loadSound(name, base64Data) {
+                try {
+                    const response = await fetch(base64Data);
+                    const arrayBuffer = await response.arrayBuffer();
+                    const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+                    this.buffers.set(name, audioBuffer);
+                } catch (error) {
+                    console.error('Error loading sound:', error);
+                }
+            }
+
+            playSound(name, volume = 1) {
+                const buffer = this.buffers.get(name);
+                if (buffer) {
+                    const source = this.audioContext.createBufferSource();
+                    source.buffer = buffer;
+                    
+                    const gainNode = this.audioContext.createGain();
+                    gainNode.gain.value = volume;
+                    
+                    source.connect(gainNode);
+                    gainNode.connect(this.masterGain);
+                    
+                    source.start(0);
+                }
+            }
+        }
+
+        // Game Class
+        class Game {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.audioManager = new AudioManager();
+                
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+
+                this.player = {
+                    x: 0,
+                    y: 0,
+                    angle: 0,
+                    moveSpeed: 5,
+                    turnSpeed: 0.003
+                };
+
+                this.keys = {};
+                this.ammo = 30;
+                this.score = 0;
+                this.targets = [];
+                this.isGameStarted = false;
+
+                // Generate initial targets
+                for (let i = 0; i < 5; i++) {
+                    this.spawnTarget();
+                }
+
+                // Event listeners
+                document.addEventListener('keydown', (e) => this.keys[e.key.toLowerCase()] = true);
+                document.addEventListener('keyup', (e) => this.keys[e.key.toLowerCase()] = false);
+                document.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+                document.addEventListener('click', (e) => this.handleClick(e));
+
+                // Load sounds
+                this.loadSounds();
+            }
+
+            async loadSounds() {
+                // Base64 encoded short sound effects
+                const shootSound = 'data:audio/wav;base64,UklGRiQEAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAEAAChAP4Bvv9eAHEBOwA4AdsAAAB0AL0A6ACiAE0AAQC5/43/SwCqAOUAyQC5AIcAEgCJ/yn/+P5aAJ8A0AC2AIEACwAg/3f+Ef5n/8r/GwARANT/Y/8k/ur9xP3U/h0AZwBRAA0ATf8w/vD95v0R/y4AMwDo/3H/Df7C/Zz9y/4cAHYAYQAZAFL/H/7a/d39EP85AEkAEACV/zD+7P3x/Tb/ZgBvACwA+f+Y/vL9+f1J/3EAfQA9ABEAqf4S/jX+cv+NAI4ATgAfAKv+CP4u/m//kwCcAGMAOACy/gj+NP5y/5MAmwBhADUAp/76/Sf+Y/+BAIoAVwArAKP++P0i/l3/ewCDAEwAIACY/u79F/5S/24AdQA8AAwAhv7Y/QT+O/9ZAF8AKgD8/3X+zP38/Tb/VwBgACwA///C/U39R/6P/8MAAAFWAD0AMwAUABQA//+k/1//MADX/2L/w/4//vz9y/3b/i4AZwBaABkASP8i/u390P0N/ysALwDk/2z/Cv7A/Zr9zv4iAH4AagAjAFz/LP7k/ef9F/87AFAAGgCd/zX+8/0B/kj/dgCBAEMAGwCw/iH+R/6E/6gAvABzAEgAw/4h/kn+gv+iALMAZgA3AK3+//0k/lv/dQB8ADsACwCF/tT9+v00/1MAVwAiAPH/Z/69/eL9HP8+AEAAEwDk/2L+wP3r/Sn/TABSACQAAwB2/tX9Cv5J/3QAegBCABsAp/4N/jz+dv+XAJ8AWgAvAK7+C/43/m//jgCUAFQAJgCi/v/9LP5k/4QAjQBMAB8Anf77/Sj+YP+AAIkASgAcAJ3++/0o/mD/gACJAEoAHACe//z9Kf5i/4IACwEhATwBFAEGAQgB9gDLAKgAfgBLABMA2P+g/2f/Mf8E/9r+uv6f/o7+i/6W/qn+yP7x/iP/Wv+U/9D/CwBDAHQAoQDIAOkABAEZASIBJAEeARIB/gDkAMYApgCFAGQAQwAiAAIA5P/J/7D/nP+N/4P/f/+G/43/m/+s/8P/3f/4/xMALgBIAGIAegCRAKYAuADGANEA2ADaANcA0ADGALgAqACWAIQAcgBgAE8AQAAwACQAGwAVABIAEgAVABoAIgAtADkARgBUAGMAcQCAAI4AnACpALQAvwDIAM8A0wDVANQA0ADJAMEAtwCsAKAAlACJAH4AdABrAGQAXgBaAFgAWABaAF4AYwBqAHIAewCEAI8AmgCkAK8AuQDCAMoA0QDWAN0A3gDdANoA1QDOAMUAvQCzAKoAoQCZAJIAjACHAIMAggCBAIMAhgCKAI8AlQCcAKMAqwCzALoAwwDKANIA2ADdAOEA5ADlAOUA4wDgAN0A2QDUANAAzADIAMUAxADEAMUAxwDIAMoAzABCAEQARgBCAD4APAA/AEAAPwBGAEoARwBKAFAATwBJAEsASgBCAD8APwA+AD0AQQBFAEYASgBMAE4AUwBRAE4ATwBNAEkARwBGAEQAQwBFAEgASgBMAFAAUwBUAFUAVgBWAFQAUgBRAE8ATgBNAE0ATgBPAFAAUgBVAFcAWQBbAF4AXgBdAF0AXABaAFkAWABXAFcAWQBaAFwAXwBhAGQAZgBoAGkAaQBoAGcAZQBkAGIAYgBhAGIAYwBkAGYAaABrAG0AbwBxAHIAcgBxAHAAcABuAG0AbABsAE0ATgBNAEoASABHAEYARgBDAEMAQgBAAD8APgA9AD0APgA/AEEAQwBFAEgASgBMAEwATABLAEoASABHAEYARQBFAEYARwBJAEsATgBQAFMAVQBVAFYAVQBVAFQAUwBRAFEAUABQAFEAUgBUAFYAWABbAFwAXgBfAF8AXwBeAF0AXABbAFoAWgBbAFsAXQBfAGAAYgBlAGYAaABpAGkAaABoAGcAZgBlAGQAZABkAGUAZwBpAGsAbgBwAHIAcwBzAHMAcgBxAHEAcABvAG8AcABvAA==';
+                const reloadSound = 'data:audio/wav;base64,UklGRrgDAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YZMDAAB0/4QA0wCEAP3/bP8NAK0AVQDF/8r/AADg/xoAQgBhAE8AEgCu/1T/Lf9p/8r/JwBCAD8AKQABANT/ev8w/zL/gP/x/zwATgBEACwABADJ/27/Nf9K/6j/EgBUAFwATAA3AAgAwv9n/0n/if/s/1YAigCTAG0AMgDj/3P/KP8+/4z/9/9EAGEAWwAuAPT/sv9g/0z/m/8cAHcAngCPAGQAGQDS/3z/T/+j/ygAlgDPAKkAVQDz/6L/Wf9f/87/awD0AP0ArwA7/7z+uP4i/8r/dQDCALYATQDK/2H/SP+p/1YA3QAiAf8AkwD5/3z/Q/+k/2gABAFMAQsBkQDp/1z/SP/S/7MATwGGAV0B3QBE/6r+nf5O/yYAFgFXASIBgwDb/1D/fv9BAD0BjwGHARkBVwCO/xz/QP/w/8EARQFfAQkBWACz/zr/pf+VAGYBwwGRAesARwCG//P+t/+qAIIB1QF5AdEAPgCp/4r/eQCLAesB4QGSASYA0P64/u7/6QCrAfIBqgEEAWwA8v/v/9EAnwH7AbMB6gBNAK//wf9eAFYB0gGeARQBZQDz/wkAGgCaAeYBkQHPACoAwP8fAHkA1QEEApABrwD3/4n/KwDGADQCQwJ6AbT/kv5n/vX+4f9UAYwBMgF+/0H+Nf7n/vn/SwFeASgBaP87/jn+Af8ZAF8BYQEUAUb/JP41/in/RAB3AWIBBAEr/w/+N/5G/2wAkQFfAfQAEv/8/Tn+XP+PAKYBVgHgAPn+7f08/nX/sQC4AUwBzwDk/uH9QP6P/88AywFDAb8A0f7Y/Ub+qP/uANsBOgGuAMP+0v1N/r7/BwHpAS8BnwC2/s79VP7V/x0B8wEkAY8Aqf7H/Vv+7f81AfwBGAGBAJ3+w/1j/gYATQEFAg4BcwCS/r/9bP4fAGQBDAIDAWQAh/69/XP+NgB6ARICAAFXAHz+u
